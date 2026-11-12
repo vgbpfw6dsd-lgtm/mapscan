@@ -3,27 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>プライベート位置確認（APIキー不要）</title>
-  
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <title>プライベート位置確認（簡易マップ）</title>
   
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; }
-    
-    #map { 
-      height: 62vh; 
-      width: 100%; 
-      z-index: 1;
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
     }
     
     .panel {
       padding: 14px 16px;
       background: #fff;
       border-bottom: 1px solid #e0e0e0;
-      position: relative;
-      z-index: 10;
+      flex-shrink: 0;
     }
     
     .row {
@@ -40,6 +38,7 @@
       border: 1px solid #ccc;
       border-radius: 8px;
       min-width: 140px;
+      background: #f8fafc;
     }
     
     button {
@@ -55,19 +54,20 @@
     
     button:active { opacity: 0.85; }
     button.secondary { background: #64748b; }
-    button.danger { background: #dc2626; }
     
     #distance {
       font-size: 22px;
       font-weight: bold;
       color: #2563eb;
       margin: 6px 0 2px;
+      text-align: center;
     }
     
     #status { 
       font-size: 13px; 
       color: #666; 
       margin-top: 2px;
+      text-align: center;
     }
     
     .note {
@@ -75,11 +75,32 @@
       color: #888;
       margin-top: 8px;
       line-height: 1.45;
+      text-align: center;
     }
 
-    /* マーカーの見た目調整 */
-    .leaflet-marker-icon {
-      border-radius: 50%;
+    /* 簡易マップ */
+    #mapArea {
+      flex: 1;
+      position: relative;
+      background: #e2e8f0;
+      min-height: 250px;
+    }
+
+    #canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .map-label {
+      position: absolute;
+      bottom: 10px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      pointer-events: none;
     }
   </style>
 </head>
@@ -97,71 +118,54 @@
     <div id="distance">距離：―</div>
     <div id="status">自分の位置を取得しています...</div>
     <div class="note">
-      ※ APIキー不要・位置情報は外部に送信されません<br>
+      ※ マップは簡素表示・位置情報は外部に送信されません<br>
       ※ 相手の位置は自分で入力した座標のみ使用します
     </div>
   </div>
   
-  <div id="map"></div>
+  <div id="mapArea">
+    <canvas id="canvas"></canvas>
+    <div class="map-label">青：自分　／　赤：相手</div>
+  </div>
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  
   <script>
-    // 地図初期化
-    const map = L.map('map').setView([35.2073, 136.9494], 15);
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
 
-    // OpenStreetMapタイル（無料・APIキー不要）
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
-
-    // 自分のマーカー（青）
-    const myIcon = L.divIcon({
-      className: '',
-      html: `<div style="
-        width: 22px; height: 22px;
-        background: #2563eb;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-      "></div>`,
-      iconSize: [22, 22],
-      iconAnchor: [11, 11]
-    });
-
-    // 相手のマーカー（赤）
-    const targetIcon = L.divIcon({
-      className: '',
-      html: `<div style="
-        width: 22px; height: 22px;
-        background: #dc2626;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-      "></div>`,
-      iconSize: [22, 22],
-      iconAnchor: [11, 11]
-    });
-
-    let myMarker = null;
-    let targetMarker = null;
     let myPos = null;
     let targetPos = null;
-    let initialCentered = false;
+    let width = 0;
+    let height = 0;
 
-    // 距離計算（Haversine公式）
+    function resize() {
+      const area = document.getElementById('mapArea');
+      width = area.clientWidth || 300;
+      height = area.clientHeight || 300;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+      draw();
+    }
+
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+    setTimeout(resize, 50);
+    setTimeout(resize, 400);
+
+    // 距離計算
     function calcDistance(lat1, lng1, lat2, lng2) {
-      const R = 6371000; // 地球半径（メートル）
+      const R = 6371000;
       const toRad = x => x * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLng = toRad(lng2 - lng1);
       const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
                 Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
                 Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return R * c;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     function updateDistance() {
@@ -171,16 +175,96 @@
           dist < 1000
             ? `距離：約 ${Math.round(dist)} m`
             : `距離：約 ${(dist / 1000).toFixed(2)} km`;
-
-        // 両方のマーカーが見えるように調整
-        const group = L.featureGroup([myMarker, targetMarker]);
-        map.fitBounds(group.getBounds().pad(0.2));
       } else {
         document.getElementById('distance').textContent = '距離：―';
       }
+      draw();
     }
 
-    // 自分の位置を監視
+    function draw() {
+      // 背景
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(0, 0, width, height);
+
+      // グリッド
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      if (!myPos) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('位置情報を待っています...', width / 2, height / 2);
+        return;
+      }
+
+      // 中心とスケール
+      let centerLat = myPos.lat;
+      let centerLng = myPos.lng;
+      let scale = 50000;
+
+      if (targetPos) {
+        centerLat = (myPos.lat + targetPos.lat) / 2;
+        centerLng = (myPos.lng + targetPos.lng) / 2;
+        const dist = calcDistance(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng);
+        scale = (Math.min(width, height) * 0.32) / (dist / 111320 || 0.001);
+        scale = Math.max(7000, Math.min(scale, 160000));
+      }
+
+      function toXY(lat, lng) {
+        return {
+          x: width / 2 + (lng - centerLng) * scale * Math.cos(centerLat * Math.PI / 180),
+          y: height / 2 - (lat - centerLat) * scale
+        };
+      }
+
+      const myXY = toXY(myPos.lat, myPos.lng);
+
+      // 点線
+      if (targetPos) {
+        const tXY = toXY(targetPos.lat, targetPos.lng);
+        ctx.beginPath();
+        ctx.moveTo(myXY.x, myXY.y);
+        ctx.lineTo(tXY.x, tXY.y);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([7, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 相手（赤）
+        ctx.beginPath();
+        ctx.arc(tXY.x, tXY.y, 15, 0, Math.PI * 2);
+        ctx.fillStyle = '#dc2626';
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+      }
+
+      // 自分（青）
+      ctx.beginPath();
+      ctx.arc(myXY.x, myXY.y, 15, 0, Math.PI * 2);
+      ctx.fillStyle = '#2563eb';
+      ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    }
+
+    // 現在地
     if (navigator.geolocation) {
       navigator.geolocation.watchPosition(
         (pos) => {
@@ -188,26 +272,13 @@
             lat: pos.coords.latitude,
             lng: pos.coords.longitude
           };
-
-          if (myMarker) {
-            myMarker.setLatLng([myPos.lat, myPos.lng]);
-          } else {
-            myMarker = L.marker([myPos.lat, myPos.lng], { icon: myIcon })
-              .addTo(map)
-              .bindPopup('自分');
-          }
-
-          if (!initialCentered) {
-            map.setView([myPos.lat, myPos.lng], 16);
-            initialCentered = true;
-          }
-
-          updateDistance();
           document.getElementById('status').textContent =
             `自分の位置更新中（精度 約${Math.round(pos.coords.accuracy)}m）`;
+          updateDistance();
         },
         (err) => {
           document.getElementById('status').textContent = '位置情報エラー: ' + err.message;
+          draw();
         },
         {
           enableHighAccuracy: true,
@@ -219,7 +290,7 @@
       document.getElementById('status').textContent = 'このブラウザは位置情報に対応していません';
     }
 
-    // 相手の位置をセット
+    // 相手セット
     document.getElementById('setBtn').onclick = () => {
       const lat = parseFloat(document.getElementById('latInput').value);
       const lng = parseFloat(document.getElementById('lngInput').value);
@@ -234,36 +305,25 @@
       }
 
       targetPos = { lat, lng };
-
-      if (targetMarker) {
-        targetMarker.setLatLng([lat, lng]);
-      } else {
-        targetMarker = L.marker([lat, lng], { icon: targetIcon })
-          .addTo(map)
-          .bindPopup('相手');
-      }
-
-      updateDistance();
       document.getElementById('status').textContent = '相手の位置をセットしました';
+      updateDistance();
     };
 
     // クリア
     document.getElementById('clearBtn').onclick = () => {
-      if (targetMarker) {
-        map.removeLayer(targetMarker);
-        targetMarker = null;
-      }
       targetPos = null;
       document.getElementById('latInput').value = '';
       document.getElementById('lngInput').value = '';
       document.getElementById('distance').textContent = '距離：―';
       document.getElementById('status').textContent = '相手の位置をクリアしました';
+      draw();
     };
 
-    // 自分の位置に戻る
+    // 自分に戻る（簡易マップでは中心を自分にリセット）
     document.getElementById('centerMyBtn').onclick = () => {
       if (myPos) {
-        map.setView([myPos.lat, myPos.lng], 16);
+        // 相手がいる場合は両方見えるように、いない場合は自分中心
+        updateDistance();
       }
     };
   </script>
