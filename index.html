@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>プライベート位置確認（修正版）</title>
-  
+  <title>簡易位置マップ + Appleマップ</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -16,21 +15,18 @@
       display: flex;
       flex-direction: column;
     }
-    
     .panel {
       padding: 14px 16px;
       background: #fff;
       border-bottom: 1px solid #e0e0e0;
       flex-shrink: 0;
     }
-    
     .row {
       display: flex;
       gap: 8px;
       margin-bottom: 10px;
       flex-wrap: wrap;
     }
-    
     input {
       flex: 1;
       padding: 12px 14px;
@@ -40,68 +36,68 @@
       min-width: 140px;
       background: #f8fafc;
     }
-    
     button {
-      padding: 12px 16px;
+      padding: 12px 14px;
       font-size: 15px;
       border: none;
       border-radius: 8px;
       cursor: pointer;
-      background: #2563eb;
       color: white;
       white-space: nowrap;
     }
-    
     button:active { opacity: 0.85; }
-    button.secondary { background: #64748b; }
-    button.green { background: #059669; }
-    
+    .btn-blue { background: #2563eb; }
+    .btn-gray { background: #64748b; }
+    .btn-green { background: #059669; }
+    .btn-apple { background: #000; }
     #distance {
-      font-size: 22px;
+      font-size: 24px;
       font-weight: bold;
       color: #2563eb;
-      margin: 6px 0 2px;
+      margin: 8px 0 4px;
       text-align: center;
     }
-    
-    #status { 
-      font-size: 13px; 
-      color: #666; 
-      margin-top: 4px;
+    #status {
+      font-size: 13px;
+      color: #666;
       text-align: center;
       min-height: 18px;
     }
-    
     .note {
       font-size: 12px;
       color: #888;
       margin-top: 8px;
-      line-height: 1.45;
       text-align: center;
+      line-height: 1.4;
     }
-
     #mapArea {
       flex: 1;
       position: relative;
       background: #e2e8f0;
-      min-height: 250px;
+      min-height: 220px;
     }
-
     #canvas {
       width: 100%;
       height: 100%;
       display: block;
     }
-
     .map-label {
       position: absolute;
       bottom: 10px;
-      left: 0;
-      right: 0;
+      left: 0; right: 0;
       text-align: center;
       font-size: 12px;
       color: #64748b;
       pointer-events: none;
+    }
+    .apple-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .apple-row button {
+      flex: 1;
+      font-size: 14px;
     }
   </style>
 </head>
@@ -112,20 +108,29 @@
       <input type="text" id="lngInput" placeholder="相手の経度（例: 136.8815）" inputmode="decimal">
     </div>
     <div class="row">
-      <button id="setBtn">相手の位置をセット</button>
-      <button id="clearBtn" class="secondary">クリア</button>
+      <button id="setBtn" class="btn-blue">相手の位置をセット</button>
+      <button id="clearBtn" class="btn-gray">クリア</button>
+      <button id="getLocationBtn" class="btn-green">現在地を取得</button>
     </div>
-    <div class="row">
-      <button id="getLocationBtn" class="green">現在地を取得・更新</button>
-    </div>
+
     <div id="distance">距離：―</div>
-    <div id="status">「現在地を取得・更新」ボタンを押してください</div>
+    <div id="status">「現在地を取得」を押してください</div>
+
+    <!-- Appleマップボタン -->
+    <div class="apple-row">
+      <button id="openMyApple" class="btn-apple">自分をAppleマップで開く</button>
+      <button id="openTargetApple" class="btn-apple">相手をAppleマップで開く</button>
+    </div>
+    <div class="apple-row">
+      <button id="openBothApple" class="btn-apple" style="flex:1">二人の位置をAppleマップで見る</button>
+    </div>
+
     <div class="note">
-      ※ 位置情報が取れない場合は上の緑ボタンを押してください<br>
-      ※ 位置情報の許可を求められたら「許可」を選んでください
+      青＝自分 / 赤＝相手<br>
+      Appleマップボタンで本格的な地図が開けます
     </div>
   </div>
-  
+
   <div id="mapArea">
     <canvas id="canvas"></canvas>
     <div class="map-label">青：自分　／　赤：相手</div>
@@ -135,11 +140,11 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
+    const distanceEl = document.getElementById('distance');
 
     let myPos = null;
     let targetPos = null;
-    let width = 0;
-    let height = 0;
+    let width = 0, height = 0;
     let watchId = null;
 
     function resize() {
@@ -155,7 +160,6 @@
       ctx.scale(dpr, dpr);
       draw();
     }
-
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', () => setTimeout(resize, 250));
     setTimeout(resize, 50);
@@ -166,21 +170,18 @@
       const toRad = x => x * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLng = toRad(lng2 - lng1);
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLng/2) * Math.sin(dLng/2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
     function updateDistance() {
       if (myPos && targetPos) {
         const dist = calcDistance(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng);
-        document.getElementById('distance').textContent =
-          dist < 1000
-            ? `距離：約 ${Math.round(dist)} m`
-            : `距離：約 ${(dist / 1000).toFixed(2)} km`;
+        distanceEl.textContent = dist < 1000
+          ? `距離：約 ${Math.round(dist)} m`
+          : `距離：約 ${(dist/1000).toFixed(2)} km`;
       } else {
-        document.getElementById('distance').textContent = '距離：―';
+        distanceEl.textContent = '距離：―';
       }
       draw();
     }
@@ -193,62 +194,53 @@
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 1;
       for (let x = 0; x <= width; x += 40) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
       }
       for (let y = 0; y <= height; y += 40) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
       }
 
       if (!myPos) {
         ctx.fillStyle = '#94a3b8';
         ctx.font = '15px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('現在地がまだ取得できていません', width / 2, height / 2 - 10);
-        ctx.fillText('緑のボタンを押してください', width / 2, height / 2 + 15);
+        ctx.fillText('現在地がまだ取得できていません', width/2, height/2 - 8);
+        ctx.fillText('「現在地を取得」を押してください', width/2, height/2 + 14);
         return;
       }
 
-      let centerLat = myPos.lat;
-      let centerLng = myPos.lng;
-      let scale = 50000;
-
+      let cLat = myPos.lat, cLng = myPos.lng, scale = 50000;
       if (targetPos) {
-        centerLat = (myPos.lat + targetPos.lat) / 2;
-        centerLng = (myPos.lng + targetPos.lng) / 2;
-        const dist = calcDistance(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng);
-        scale = (Math.min(width, height) * 0.32) / (dist / 111320 || 0.001);
+        cLat = (myPos.lat + targetPos.lat) / 2;
+        cLng = (myPos.lng + targetPos.lng) / 2;
+        const d = calcDistance(myPos.lat, myPos.lng, targetPos.lat, targetPos.lng);
+        scale = (Math.min(width, height) * 0.32) / (d / 111320 || 0.001);
         scale = Math.max(7000, Math.min(scale, 160000));
       }
 
       function toXY(lat, lng) {
         return {
-          x: width / 2 + (lng - centerLng) * scale * Math.cos(centerLat * Math.PI / 180),
-          y: height / 2 - (lat - centerLat) * scale
+          x: width/2 + (lng - cLng) * scale * Math.cos(cLat * Math.PI/180),
+          y: height/2 - (lat - cLat) * scale
         };
       }
 
-      const myXY = toXY(myPos.lat, myPos.lng);
+      const me = toXY(myPos.lat, myPos.lng);
 
       if (targetPos) {
-        const tXY = toXY(targetPos.lat, targetPos.lng);
+        const you = toXY(targetPos.lat, targetPos.lng);
         ctx.beginPath();
-        ctx.moveTo(myXY.x, myXY.y);
-        ctx.lineTo(tXY.x, tXY.y);
+        ctx.moveTo(me.x, me.y);
+        ctx.lineTo(you.x, you.y);
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 3;
         ctx.setLineDash([7, 5]);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // 相手（赤）
+        // 赤（相手）
         ctx.beginPath();
-        ctx.arc(tXY.x, tXY.y, 15, 0, Math.PI * 2);
+        ctx.arc(you.x, you.y, 15, 0, Math.PI*2);
         ctx.fillStyle = '#dc2626';
         ctx.fill();
         ctx.lineWidth = 4;
@@ -256,9 +248,9 @@
         ctx.stroke();
       }
 
-      // 自分（青）
+      // 青（自分）
       ctx.beginPath();
-      ctx.arc(myXY.x, myXY.y, 15, 0, Math.PI * 2);
+      ctx.arc(me.x, me.y, 15, 0, Math.PI*2);
       ctx.fillStyle = '#2563eb';
       ctx.fill();
       ctx.lineWidth = 4;
@@ -266,76 +258,54 @@
       ctx.stroke();
     }
 
-    // 位置情報を取得する関数
+    // 位置取得
     function getLocation() {
       if (!navigator.geolocation) {
         statusEl.textContent = 'このブラウザは位置情報に対応していません';
         return;
       }
-
       statusEl.textContent = '位置情報を取得中...';
 
-      // まず一回取得
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          myPos = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude
-          };
+          myPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           statusEl.textContent = `現在地を取得しました（精度 約${Math.round(pos.coords.accuracy)}m）`;
           updateDistance();
 
-          // 継続監視も開始
           if (watchId === null) {
             watchId = navigator.geolocation.watchPosition(
-              (pos2) => {
-                myPos = {
-                  lat: pos2.coords.latitude,
-                  lng: pos2.coords.longitude
-                };
-                statusEl.textContent = `位置更新中（精度 約${Math.round(pos2.coords.accuracy)}m）`;
+              (p) => {
+                myPos = { lat: p.coords.latitude, lng: p.coords.longitude };
+                statusEl.textContent = `位置更新中（精度 約${Math.round(p.coords.accuracy)}m）`;
                 updateDistance();
               },
-              (err) => {
-                statusEl.textContent = '継続更新に失敗: ' + err.message;
-              },
+              () => {},
               { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
             );
           }
         },
         (err) => {
-          let msg = '位置情報を取得できませんでした。';
-          if (err.code === 1) msg = '位置情報の許可が必要です。設定から許可してください。';
-          if (err.code === 2) msg = '位置情報を取得できません（電波状況を確認）。';
-          if (err.code === 3) msg = '位置情報の取得がタイムアウトしました。再試行してください。';
+          let msg = '位置情報を取得できませんでした';
+          if (err.code === 1) msg = '位置情報の許可が必要です';
+          if (err.code === 2) msg = '位置を取得できません（電波状況を確認）';
+          if (err.code === 3) msg = 'タイムアウトしました。再試行してください';
           statusEl.textContent = msg;
           draw();
         },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0
-        }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     }
 
-    // 緑ボタン
     document.getElementById('getLocationBtn').onclick = getLocation;
 
     // 相手セット
     document.getElementById('setBtn').onclick = () => {
       const lat = parseFloat(document.getElementById('latInput').value);
       const lng = parseFloat(document.getElementById('lngInput').value);
-
-      if (isNaN(lat) || isNaN(lng)) {
+      if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
         alert('緯度と経度を正しく入力してください');
         return;
       }
-      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        alert('緯度・経度の範囲が正しくありません');
-        return;
-      }
-
       targetPos = { lat, lng };
       statusEl.textContent = '相手の位置をセットしました';
       updateDistance();
@@ -346,13 +316,46 @@
       targetPos = null;
       document.getElementById('latInput').value = '';
       document.getElementById('lngInput').value = '';
-      document.getElementById('distance').textContent = '距離：―';
-      statusEl.textContent = '相手の位置をクリアしました';
+      distanceEl.textContent = '距離：―';
+      statusEl.textContent = 'クリアしました';
       draw();
     };
 
-    // ページ読み込み時に自動で位置取得を試みる
-    setTimeout(getLocation, 500);
+    // ===== Appleマップを開く =====
+    function openAppleMaps(lat, lng, label) {
+      // iOSでは maps:// の方がネイティブアプリを直接開ける
+      const url = `https://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(label)}&z=16`;
+      window.open(url, '_blank');
+    }
+
+    document.getElementById('openMyApple').onclick = () => {
+      if (!myPos) {
+        alert('先に現在地を取得してください');
+        return;
+      }
+      openAppleMaps(myPos.lat, myPos.lng, '自分の位置');
+    };
+
+    document.getElementById('openTargetApple').onclick = () => {
+      if (!targetPos) {
+        alert('先に相手の位置をセットしてください');
+        return;
+      }
+      openAppleMaps(targetPos.lat, targetPos.lng, '相手の位置');
+    };
+
+    document.getElementById('openBothApple').onclick = () => {
+      if (!myPos || !targetPos) {
+        alert('自分と相手の両方の位置が必要です');
+        return;
+      }
+      // 経路表示
+      const url = `https://maps.apple.com/?saddr=${myPos.lat},${myPos.lng}&daddr=${targetPos.lat},${targetPos.lng}`;
+      window.open(url, '_blank');
+    };
+
+    // 起動時に位置取得を試みる
+    setTimeout(getLocation, 600);
   </script>
 </body>
 </html>
