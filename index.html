@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>プライベート位置確認（APIキー不要）</title>
+  <title>ピンで位置指定マップ</title>
   
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   
   <style>
@@ -13,7 +12,7 @@
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; }
     
     #map { 
-      height: 62vh; 
+      height: 58vh; 
       width: 100%; 
       z-index: 1;
     }
@@ -40,6 +39,7 @@
       border: 1px solid #ccc;
       border-radius: 8px;
       min-width: 140px;
+      background: #f8fafc;
     }
     
     button {
@@ -55,19 +55,21 @@
     
     button:active { opacity: 0.85; }
     button.secondary { background: #64748b; }
-    button.danger { background: #dc2626; }
+    button.green { background: #059669; }
     
     #distance {
       font-size: 22px;
       font-weight: bold;
       color: #2563eb;
       margin: 6px 0 2px;
+      text-align: center;
     }
     
     #status { 
       font-size: 13px; 
       color: #666; 
       margin-top: 2px;
+      text-align: center;
     }
     
     .note {
@@ -75,49 +77,58 @@
       color: #888;
       margin-top: 8px;
       line-height: 1.45;
+      text-align: center;
     }
 
-    /* マーカーの見た目調整 */
-    .leaflet-marker-icon {
-      border-radius: 50%;
+    .tip {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #1e40af;
+      margin-bottom: 10px;
+      text-align: center;
     }
   </style>
 </head>
 <body>
   <div class="panel">
+    <div class="tip">
+      地図をタップすると相手の位置（赤いピン）を置けます
+    </div>
+
     <div class="row">
-      <input type="text" id="latInput" placeholder="相手の緯度（例: 35.1709）" inputmode="decimal">
-      <input type="text" id="lngInput" placeholder="相手の経度（例: 136.8815）" inputmode="decimal">
+      <input type="text" id="latInput" placeholder="緯度" inputmode="decimal" readonly>
+      <input type="text" id="lngInput" placeholder="経度" inputmode="decimal" readonly>
     </div>
     <div class="row">
-      <button id="setBtn">相手の位置をセット</button>
-      <button id="clearBtn" class="secondary">クリア</button>
+      <button id="getLocationBtn" class="green">現在地を取得</button>
+      <button id="clearBtn" class="secondary">ピンを消す</button>
       <button id="centerMyBtn" class="secondary">自分に戻る</button>
     </div>
     <div id="distance">距離：―</div>
-    <div id="status">自分の位置を取得しています...</div>
+    <div id="status">「現在地を取得」を押すか、地図をタップしてください</div>
     <div class="note">
-      ※ APIキー不要・位置情報は外部に送信されません<br>
-      ※ 相手の位置は自分で入力した座標のみ使用します
+      青ピン＝自分　／　赤ピン＝相手<br>
+      地図をタップ → 相手の位置をセット
     </div>
   </div>
   
   <div id="map"></div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   
   <script>
     // 地図初期化
-    const map = L.map('map').setView([35.2073, 136.9494], 15);
+    const map = L.map('map').setView([35.2078, 136.9502], 15);
 
-    // OpenStreetMapタイル（無料・APIキー不要）
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
-    // 自分のマーカー（青）
+    // アイコン
     const myIcon = L.divIcon({
       className: '',
       html: `<div style="
@@ -131,7 +142,6 @@
       iconAnchor: [11, 11]
     });
 
-    // 相手のマーカー（赤）
     const targetIcon = L.divIcon({
       className: '',
       html: `<div style="
@@ -149,19 +159,18 @@
     let targetMarker = null;
     let myPos = null;
     let targetPos = null;
-    let initialCentered = false;
+    let watchId = null;
 
-    // 距離計算（Haversine公式）
+    // 距離計算
     function calcDistance(lat1, lng1, lat2, lng2) {
-      const R = 6371000; // 地球半径（メートル）
+      const R = 6371000;
       const toRad = x => x * Math.PI / 180;
       const dLat = toRad(lat2 - lat1);
       const dLng = toRad(lng2 - lng1);
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+      const a = Math.sin(dLat/2)**2 +
                 Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      return R * c;
+                Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
     function updateDistance() {
@@ -172,17 +181,52 @@
             ? `距離：約 ${Math.round(dist)} m`
             : `距離：約 ${(dist / 1000).toFixed(2)} km`;
 
-        // 両方のマーカーが見えるように調整
-        const group = L.featureGroup([myMarker, targetMarker]);
-        map.fitBounds(group.getBounds().pad(0.2));
+        // 両方見えるように調整
+        if (myMarker && targetMarker) {
+          const group = L.featureGroup([myMarker, targetMarker]);
+          map.fitBounds(group.getBounds().pad(0.25));
+        }
       } else {
         document.getElementById('distance').textContent = '距離：―';
       }
     }
 
-    // 自分の位置を監視
-    if (navigator.geolocation) {
-      navigator.geolocation.watchPosition(
+    // 相手の位置をセットする共通処理
+    function setTarget(lat, lng) {
+      targetPos = { lat, lng };
+
+      document.getElementById('latInput').value = lat.toFixed(6);
+      document.getElementById('lngInput').value = lng.toFixed(6);
+
+      if (targetMarker) {
+        targetMarker.setLatLng([lat, lng]);
+      } else {
+        targetMarker = L.marker([lat, lng], { icon: targetIcon })
+          .addTo(map)
+          .bindPopup('相手');
+      }
+
+      document.getElementById('status').textContent = '相手の位置をセットしました（地図をタップで変更可能）';
+      updateDistance();
+    }
+
+    // ★ 地図をクリック/タップしたらピンを立てる
+    map.on('click', function(e) {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+      setTarget(lat, lng);
+    });
+
+    // 現在地取得
+    function getLocation() {
+      if (!navigator.geolocation) {
+        document.getElementById('status').textContent = '位置情報に対応していません';
+        return;
+      }
+
+      document.getElementById('status').textContent = '現在地を取得中...';
+
+      navigator.geolocation.getCurrentPosition(
         (pos) => {
           myPos = {
             lat: pos.coords.latitude,
@@ -197,57 +241,40 @@
               .bindPopup('自分');
           }
 
-          if (!initialCentered) {
-            map.setView([myPos.lat, myPos.lng], 16);
-            initialCentered = true;
-          }
-
-          updateDistance();
+          map.setView([myPos.lat, myPos.lng], 16);
           document.getElementById('status').textContent =
-            `自分の位置更新中（精度 約${Math.round(pos.coords.accuracy)}m）`;
+            `現在地を取得しました（精度 約${Math.round(pos.coords.accuracy)}m）`;
+          updateDistance();
+
+          // 継続監視
+          if (watchId === null) {
+            watchId = navigator.geolocation.watchPosition(
+              (p) => {
+                myPos = { lat: p.coords.latitude, lng: p.coords.longitude };
+                if (myMarker) myMarker.setLatLng([myPos.lat, myPos.lng]);
+                document.getElementById('status').textContent =
+                  `位置更新中（精度 約${Math.round(p.coords.accuracy)}m）`;
+                updateDistance();
+              },
+              () => {},
+              { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+            );
+          }
         },
         (err) => {
-          document.getElementById('status').textContent = '位置情報エラー: ' + err.message;
+          let msg = '位置情報を取得できませんでした';
+          if (err.code === 1) msg = '位置情報の許可が必要です';
+          if (err.code === 2) msg = '位置を取得できません';
+          if (err.code === 3) msg = 'タイムアウトしました。再試行してください';
+          document.getElementById('status').textContent = msg;
         },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 4000,
-          timeout: 12000
-        }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
-    } else {
-      document.getElementById('status').textContent = 'このブラウザは位置情報に対応していません';
     }
 
-    // 相手の位置をセット
-    document.getElementById('setBtn').onclick = () => {
-      const lat = parseFloat(document.getElementById('latInput').value);
-      const lng = parseFloat(document.getElementById('lngInput').value);
+    document.getElementById('getLocationBtn').onclick = getLocation;
 
-      if (isNaN(lat) || isNaN(lng)) {
-        alert('緯度と経度を正しく入力してください');
-        return;
-      }
-      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        alert('緯度・経度の範囲が正しくありません');
-        return;
-      }
-
-      targetPos = { lat, lng };
-
-      if (targetMarker) {
-        targetMarker.setLatLng([lat, lng]);
-      } else {
-        targetMarker = L.marker([lat, lng], { icon: targetIcon })
-          .addTo(map)
-          .bindPopup('相手');
-      }
-
-      updateDistance();
-      document.getElementById('status').textContent = '相手の位置をセットしました';
-    };
-
-    // クリア
+    // ピンを消す
     document.getElementById('clearBtn').onclick = () => {
       if (targetMarker) {
         map.removeLayer(targetMarker);
@@ -257,15 +284,18 @@
       document.getElementById('latInput').value = '';
       document.getElementById('lngInput').value = '';
       document.getElementById('distance').textContent = '距離：―';
-      document.getElementById('status').textContent = '相手の位置をクリアしました';
+      document.getElementById('status').textContent = 'ピンを消しました。地図をタップで再セットできます';
     };
 
-    // 自分の位置に戻る
+    // 自分に戻る
     document.getElementById('centerMyBtn').onclick = () => {
       if (myPos) {
         map.setView([myPos.lat, myPos.lng], 16);
       }
     };
+
+    // 起動時に現在地取得を試みる
+    setTimeout(getLocation, 500);
   </script>
 </body>
 </html>
