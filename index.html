@@ -12,13 +12,13 @@
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; }
     
     #map { 
-      height: 58vh; 
+      height: 52vh; 
       width: 100%; 
       z-index: 1;
     }
     
     .panel {
-      padding: 14px 16px;
+      padding: 12px 14px;
       background: #fff;
       border-bottom: 1px solid #e0e0e0;
       position: relative;
@@ -28,23 +28,23 @@
     .row {
       display: flex;
       gap: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       flex-wrap: wrap;
     }
     
-    input {
+    input, select {
       flex: 1;
-      padding: 12px 14px;
-      font-size: 16px;
+      padding: 10px 12px;
+      font-size: 15px;
       border: 1px solid #ccc;
       border-radius: 8px;
-      min-width: 140px;
+      min-width: 100px;
       background: #f8fafc;
     }
     
     button {
-      padding: 12px 16px;
-      font-size: 15px;
+      padding: 10px 14px;
+      font-size: 14px;
       border: none;
       border-radius: 8px;
       cursor: pointer;
@@ -56,12 +56,14 @@
     button:active { opacity: 0.85; }
     button.secondary { background: #64748b; }
     button.green { background: #059669; }
+    button.orange { background: #ea580c; }
+    button.active { background: #1d4ed8; }
     
     #distance {
-      font-size: 22px;
+      font-size: 20px;
       font-weight: bold;
       color: #2563eb;
-      margin: 6px 0 2px;
+      margin: 4px 0;
       text-align: center;
     }
     
@@ -75,8 +77,8 @@
     .note {
       font-size: 12px;
       color: #888;
-      margin-top: 8px;
-      line-height: 1.45;
+      margin-top: 6px;
+      line-height: 1.4;
       text-align: center;
     }
 
@@ -84,34 +86,64 @@
       background: #eff6ff;
       border: 1px solid #bfdbfe;
       border-radius: 8px;
-      padding: 10px 12px;
+      padding: 8px 10px;
       font-size: 13px;
       color: #1e40af;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       text-align: center;
     }
+
+    #settingsPanel {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 6px;
+    }
+    #settingsPanel.show { display: block; }
   </style>
 </head>
 <body>
   <div class="panel">
-    <div class="tip">
-      地図をタップすると相手の位置（赤いピン）を置けます
+    <div class="tip" id="tip">
+      地図をタップ → 相手（赤）の位置をセット
     </div>
 
     <div class="row">
-      <input type="text" id="latInput" placeholder="緯度" inputmode="decimal" readonly>
-      <input type="text" id="lngInput" placeholder="経度" inputmode="decimal" readonly>
+      <input type="text" id="latInput" placeholder="相手の緯度" inputmode="decimal" readonly>
+      <input type="text" id="lngInput" placeholder="相手の経度" inputmode="decimal" readonly>
     </div>
     <div class="row">
       <button id="getLocationBtn" class="green">現在地を取得</button>
       <button id="clearBtn" class="secondary">ピンを消す</button>
       <button id="centerMyBtn" class="secondary">自分に戻る</button>
     </div>
+    <div class="row">
+      <button id="setDestModeBtn" class="orange">目的地セット</button>
+      <button id="startMoveBtn">移動開始</button>
+      <button id="settingsBtn" class="secondary">設定</button>
+    </div>
+
+    <div id="settingsPanel">
+      <div class="row">
+        <label style="flex:0 0 auto; align-self:center; font-size:14px;">速度:</label>
+        <input type="number" id="speedInput" value="1.4" step="0.1" min="0.1" max="50" style="flex:1;">
+        <select id="speedUnit" style="flex:0 0 90px;">
+          <option value="mps">m/s</option>
+          <option value="kmh">km/h</option>
+        </select>
+      </div>
+      <div style="font-size:12px; color:#666; text-align:center; margin-top:4px;">
+        1.4 m/s ≒ 徒歩　／　5 m/s ≒ 自転車　／　13 m/s ≒ 車
+      </div>
+    </div>
+
     <div id="distance">距離：―</div>
     <div id="status">「現在地を取得」を押すか、地図をタップしてください</div>
     <div class="note">
-      青ピン＝自分　／　赤ピン＝相手<br>
-      地図をタップ → 相手の位置をセット
+      青＝自分　／　赤＝相手　／　緑＝目的地<br>
+      「目的地セット」後にタップで目的地設定 → 「移動開始」で赤ピンが一定速度で移動
     </div>
   </div>
   
@@ -131,37 +163,39 @@
     // アイコン
     const myIcon = L.divIcon({
       className: '',
-      html: `<div style="
-        width: 22px; height: 22px;
-        background: #2563eb;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-      "></div>`,
+      html: `<div style="width:22px;height:22px;background:#2563eb;border:3px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4);"></div>`,
       iconSize: [22, 22],
       iconAnchor: [11, 11]
     });
 
     const targetIcon = L.divIcon({
       className: '',
-      html: `<div style="
-        width: 22px; height: 22px;
-        background: #dc2626;
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-      "></div>`,
+      html: `<div style="width:22px;height:22px;background:#dc2626;border:3px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4);"></div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11]
+    });
+
+    const destIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;background:#16a34a;border:3px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4);"></div>`,
       iconSize: [22, 22],
       iconAnchor: [11, 11]
     });
 
     let myMarker = null;
     let targetMarker = null;
+    let destMarker = null;
     let myPos = null;
     let targetPos = null;
+    let destPos = null;
     let watchId = null;
 
-    // 距離計算
+    let setDestMode = false;
+    let isMoving = false;
+    let moveInterval = null;
+    let lastMoveTime = 0;
+
+    // 距離計算（メートル）
     function calcDistance(lat1, lng1, lat2, lng2) {
       const R = 6371000;
       const toRad = x => x * Math.PI / 180;
@@ -180,21 +214,29 @@
           dist < 1000
             ? `距離：約 ${Math.round(dist)} m`
             : `距離：約 ${(dist / 1000).toFixed(2)} km`;
-
-        // 両方見えるように調整
-        if (myMarker && targetMarker) {
-          const group = L.featureGroup([myMarker, targetMarker]);
-          map.fitBounds(group.getBounds().pad(0.25));
-        }
       } else {
         document.getElementById('distance').textContent = '距離：―';
       }
     }
 
-    // 相手の位置をセットする共通処理
+    function updateTip() {
+      const tip = document.getElementById('tip');
+      if (setDestMode) {
+        tip.textContent = '地図をタップ → 目的地（緑）をセット';
+        tip.style.background = '#fef3c7';
+        tip.style.borderColor = '#fde68a';
+        tip.style.color = '#92400e';
+      } else {
+        tip.textContent = '地図をタップ → 相手（赤）の位置をセット';
+        tip.style.background = '#eff6ff';
+        tip.style.borderColor = '#bfdbfe';
+        tip.style.color = '#1e40af';
+      }
+    }
+
+    // 相手の位置をセット
     function setTarget(lat, lng) {
       targetPos = { lat, lng };
-
       document.getElementById('latInput').value = lat.toFixed(6);
       document.getElementById('lngInput').value = lng.toFixed(6);
 
@@ -205,16 +247,36 @@
           .addTo(map)
           .bindPopup('相手');
       }
-
-      document.getElementById('status').textContent = '相手の位置をセットしました（地図をタップで変更可能）';
+      document.getElementById('status').textContent = '相手の位置をセットしました';
       updateDistance();
     }
 
-    // ★ 地図をクリック/タップしたらピンを立てる
+    // 目的地をセット
+    function setDest(lat, lng) {
+      destPos = { lat, lng };
+      if (destMarker) {
+        destMarker.setLatLng([lat, lng]);
+      } else {
+        destMarker = L.marker([lat, lng], { icon: destIcon })
+          .addTo(map)
+          .bindPopup('目的地');
+      }
+      document.getElementById('status').textContent = '目的地をセットしました。「移動開始」で赤ピンが向かいます';
+      setDestMode = false;
+      document.getElementById('setDestModeBtn').classList.remove('active');
+      updateTip();
+    }
+
+    // 地図クリック
     map.on('click', function(e) {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
-      setTarget(lat, lng);
+      if (setDestMode) {
+        setDest(lat, lng);
+      } else {
+        if (isMoving) stopMove();
+        setTarget(lat, lng);
+      }
     });
 
     // 現在地取得
@@ -223,16 +285,11 @@
         document.getElementById('status').textContent = '位置情報に対応していません';
         return;
       }
-
       document.getElementById('status').textContent = '現在地を取得中...';
 
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          myPos = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude
-          };
-
+          myPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           if (myMarker) {
             myMarker.setLatLng([myPos.lat, myPos.lng]);
           } else {
@@ -240,20 +297,16 @@
               .addTo(map)
               .bindPopup('自分');
           }
-
           map.setView([myPos.lat, myPos.lng], 16);
           document.getElementById('status').textContent =
             `現在地を取得しました（精度 約${Math.round(pos.coords.accuracy)}m）`;
           updateDistance();
 
-          // 継続監視
           if (watchId === null) {
             watchId = navigator.geolocation.watchPosition(
               (p) => {
                 myPos = { lat: p.coords.latitude, lng: p.coords.longitude };
                 if (myMarker) myMarker.setLatLng([myPos.lat, myPos.lng]);
-                document.getElementById('status').textContent =
-                  `位置更新中（精度 約${Math.round(p.coords.accuracy)}m）`;
                 updateDistance();
               },
               () => {},
@@ -276,26 +329,117 @@
 
     // ピンを消す
     document.getElementById('clearBtn').onclick = () => {
-      if (targetMarker) {
-        map.removeLayer(targetMarker);
-        targetMarker = null;
-      }
+      stopMove();
+      if (targetMarker) { map.removeLayer(targetMarker); targetMarker = null; }
+      if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
       targetPos = null;
+      destPos = null;
       document.getElementById('latInput').value = '';
       document.getElementById('lngInput').value = '';
       document.getElementById('distance').textContent = '距離：―';
-      document.getElementById('status').textContent = 'ピンを消しました。地図をタップで再セットできます';
+      document.getElementById('status').textContent = 'ピンを消しました';
+      setDestMode = false;
+      document.getElementById('setDestModeBtn').classList.remove('active');
+      updateTip();
     };
 
     // 自分に戻る
     document.getElementById('centerMyBtn').onclick = () => {
-      if (myPos) {
-        map.setView([myPos.lat, myPos.lng], 16);
+      if (myPos) map.setView([myPos.lat, myPos.lng], 16);
+    };
+
+    // 目的地モード切替
+    document.getElementById('setDestModeBtn').onclick = () => {
+      setDestMode = !setDestMode;
+      document.getElementById('setDestModeBtn').classList.toggle('active', setDestMode);
+      updateTip();
+      if (setDestMode) {
+        document.getElementById('status').textContent = '地図をタップして目的地を設定してください';
       }
     };
 
-    // 起動時に現在地取得を試みる
+    // 設定パネル
+    document.getElementById('settingsBtn').onclick = () => {
+      document.getElementById('settingsPanel').classList.toggle('show');
+    };
+
+    // 速度取得（m/s）
+    function getSpeedMps() {
+      const val = parseFloat(document.getElementById('speedInput').value) || 1.4;
+      const unit = document.getElementById('speedUnit').value;
+      return unit === 'kmh' ? val / 3.6 : val;
+    }
+
+    // 移動開始/停止
+    function startMove() {
+      if (!targetPos) {
+        document.getElementById('status').textContent = '先に相手（赤ピン）の位置をセットしてください';
+        return;
+      }
+      if (!destPos) {
+        document.getElementById('status').textContent = '先に目的地をセットしてください';
+        return;
+      }
+      if (isMoving) {
+        stopMove();
+        return;
+      }
+
+      isMoving = true;
+      document.getElementById('startMoveBtn').textContent = '停止';
+      document.getElementById('startMoveBtn').classList.add('orange');
+      lastMoveTime = performance.now();
+      document.getElementById('status').textContent = '移動中...';
+
+      moveInterval = setInterval(() => {
+        const now = performance.now();
+        const dt = (now - lastMoveTime) / 1000; // 秒
+        lastMoveTime = now;
+
+        const speed = getSpeedMps();
+        const dist = calcDistance(targetPos.lat, targetPos.lng, destPos.lat, destPos.lng);
+
+        if (dist < 2) { // ほぼ到着
+          targetPos = { ...destPos };
+          if (targetMarker) targetMarker.setLatLng([targetPos.lat, targetPos.lng]);
+          stopMove();
+          document.getElementById('status').textContent = '目的地に到着しました';
+          updateDistance();
+          return;
+        }
+
+        const step = speed * dt;
+        const ratio = Math.min(1, step / dist);
+        targetPos.lat += (destPos.lat - targetPos.lat) * ratio;
+        targetPos.lng += (destPos.lng - targetPos.lng) * ratio;
+
+        if (targetMarker) targetMarker.setLatLng([targetPos.lat, targetPos.lng]);
+        document.getElementById('latInput').value = targetPos.lat.toFixed(6);
+        document.getElementById('lngInput').value = targetPos.lng.toFixed(6);
+        updateDistance();
+
+        const remain = calcDistance(targetPos.lat, targetPos.lng, destPos.lat, destPos.lng);
+        const eta = remain / speed;
+        document.getElementById('status').textContent =
+          `移動中... 残り約${Math.round(remain)}m（約${Math.ceil(eta)}秒）`;
+      }, 100); // 10fps
+    }
+
+    function stopMove() {
+      isMoving = false;
+      if (moveInterval) {
+        clearInterval(moveInterval);
+        moveInterval = null;
+      }
+      document.getElementById('startMoveBtn').textContent = '移動開始';
+      document.getElementById('startMoveBtn').classList.remove('orange');
+    }
+
+    document.getElementById('startMoveBtn').onclick = startMove;
+
+    // 起動時に現在地取得
     setTimeout(getLocation, 500);
+    updateTip();
   </script>
 </body>
 </html>
