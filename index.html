@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>プライベート位置確認（簡易マップ）</title>
+  <title>プライベート位置確認（修正版）</title>
   
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,6 +54,7 @@
     
     button:active { opacity: 0.85; }
     button.secondary { background: #64748b; }
+    button.green { background: #059669; }
     
     #distance {
       font-size: 22px;
@@ -66,8 +67,9 @@
     #status { 
       font-size: 13px; 
       color: #666; 
-      margin-top: 2px;
+      margin-top: 4px;
       text-align: center;
+      min-height: 18px;
     }
     
     .note {
@@ -78,7 +80,6 @@
       text-align: center;
     }
 
-    /* 簡易マップ */
     #mapArea {
       flex: 1;
       position: relative;
@@ -113,13 +114,15 @@
     <div class="row">
       <button id="setBtn">相手の位置をセット</button>
       <button id="clearBtn" class="secondary">クリア</button>
-      <button id="centerMyBtn" class="secondary">自分に戻る</button>
+    </div>
+    <div class="row">
+      <button id="getLocationBtn" class="green">現在地を取得・更新</button>
     </div>
     <div id="distance">距離：―</div>
-    <div id="status">自分の位置を取得しています...</div>
+    <div id="status">「現在地を取得・更新」ボタンを押してください</div>
     <div class="note">
-      ※ マップは簡素表示・位置情報は外部に送信されません<br>
-      ※ 相手の位置は自分で入力した座標のみ使用します
+      ※ 位置情報が取れない場合は上の緑ボタンを押してください<br>
+      ※ 位置情報の許可を求められたら「許可」を選んでください
     </div>
   </div>
   
@@ -131,11 +134,13 @@
   <script>
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
 
     let myPos = null;
     let targetPos = null;
     let width = 0;
     let height = 0;
+    let watchId = null;
 
     function resize() {
       const area = document.getElementById('mapArea');
@@ -156,7 +161,6 @@
     setTimeout(resize, 50);
     setTimeout(resize, 400);
 
-    // 距離計算
     function calcDistance(lat1, lng1, lat2, lng2) {
       const R = 6371000;
       const toRad = x => x * Math.PI / 180;
@@ -182,7 +186,6 @@
     }
 
     function draw() {
-      // 背景
       ctx.fillStyle = '#e2e8f0';
       ctx.fillRect(0, 0, width, height);
 
@@ -206,11 +209,11 @@
         ctx.fillStyle = '#94a3b8';
         ctx.font = '15px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('位置情報を待っています...', width / 2, height / 2);
+        ctx.fillText('現在地がまだ取得できていません', width / 2, height / 2 - 10);
+        ctx.fillText('緑のボタンを押してください', width / 2, height / 2 + 15);
         return;
       }
 
-      // 中心とスケール
       let centerLat = myPos.lat;
       let centerLng = myPos.lng;
       let scale = 50000;
@@ -232,7 +235,6 @@
 
       const myXY = toXY(myPos.lat, myPos.lng);
 
-      // 点線
       if (targetPos) {
         const tXY = toXY(targetPos.lat, targetPos.lng);
         ctx.beginPath();
@@ -264,31 +266,61 @@
       ctx.stroke();
     }
 
-    // 現在地
-    if (navigator.geolocation) {
-      navigator.geolocation.watchPosition(
+    // 位置情報を取得する関数
+    function getLocation() {
+      if (!navigator.geolocation) {
+        statusEl.textContent = 'このブラウザは位置情報に対応していません';
+        return;
+      }
+
+      statusEl.textContent = '位置情報を取得中...';
+
+      // まず一回取得
+      navigator.geolocation.getCurrentPosition(
         (pos) => {
           myPos = {
             lat: pos.coords.latitude,
             lng: pos.coords.longitude
           };
-          document.getElementById('status').textContent =
-            `自分の位置更新中（精度 約${Math.round(pos.coords.accuracy)}m）`;
+          statusEl.textContent = `現在地を取得しました（精度 約${Math.round(pos.coords.accuracy)}m）`;
           updateDistance();
+
+          // 継続監視も開始
+          if (watchId === null) {
+            watchId = navigator.geolocation.watchPosition(
+              (pos2) => {
+                myPos = {
+                  lat: pos2.coords.latitude,
+                  lng: pos2.coords.longitude
+                };
+                statusEl.textContent = `位置更新中（精度 約${Math.round(pos2.coords.accuracy)}m）`;
+                updateDistance();
+              },
+              (err) => {
+                statusEl.textContent = '継続更新に失敗: ' + err.message;
+              },
+              { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+            );
+          }
         },
         (err) => {
-          document.getElementById('status').textContent = '位置情報エラー: ' + err.message;
+          let msg = '位置情報を取得できませんでした。';
+          if (err.code === 1) msg = '位置情報の許可が必要です。設定から許可してください。';
+          if (err.code === 2) msg = '位置情報を取得できません（電波状況を確認）。';
+          if (err.code === 3) msg = '位置情報の取得がタイムアウトしました。再試行してください。';
+          statusEl.textContent = msg;
           draw();
         },
         {
           enableHighAccuracy: true,
-          maximumAge: 4000,
-          timeout: 12000
+          timeout: 15000,
+          maximumAge: 0
         }
       );
-    } else {
-      document.getElementById('status').textContent = 'このブラウザは位置情報に対応していません';
     }
+
+    // 緑ボタン
+    document.getElementById('getLocationBtn').onclick = getLocation;
 
     // 相手セット
     document.getElementById('setBtn').onclick = () => {
@@ -305,7 +337,7 @@
       }
 
       targetPos = { lat, lng };
-      document.getElementById('status').textContent = '相手の位置をセットしました';
+      statusEl.textContent = '相手の位置をセットしました';
       updateDistance();
     };
 
@@ -315,17 +347,12 @@
       document.getElementById('latInput').value = '';
       document.getElementById('lngInput').value = '';
       document.getElementById('distance').textContent = '距離：―';
-      document.getElementById('status').textContent = '相手の位置をクリアしました';
+      statusEl.textContent = '相手の位置をクリアしました';
       draw();
     };
 
-    // 自分に戻る（簡易マップでは中心を自分にリセット）
-    document.getElementById('centerMyBtn').onclick = () => {
-      if (myPos) {
-        // 相手がいる場合は両方見えるように、いない場合は自分中心
-        updateDistance();
-      }
-    };
+    // ページ読み込み時に自動で位置取得を試みる
+    setTimeout(getLocation, 500);
   </script>
 </body>
 </html>
