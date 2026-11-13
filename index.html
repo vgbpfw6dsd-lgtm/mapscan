@@ -141,6 +141,7 @@
     <div class="row">
       <button id="setDestModeBtn" class="orange">目的地セット</button>
       <button id="drawRouteBtn" class="purple">ルートをなぞる</button>
+      <button id="placeNumberBtn" class="orange">番号を置く</button>
       <button id="undoRouteBtn" class="secondary">1点戻す</button>
       <button id="clearRouteBtn" class="secondary">ルート全消去</button>
     </div>
@@ -264,6 +265,8 @@
 
     let setDestMode = false;
     let drawRouteMode = false;
+    let placeNumberMode = false;
+    let nextNumber = 1;
     let isMoving = false;
     let moveInterval = null;
     let lastMoveTime = 0;
@@ -271,7 +274,7 @@
     // ルート関連
     let routePoints = []; // [{lat, lng}, ...]
     let routePolyline = null;
-    let routeNumberMarkers = [];
+    let routeNumberMarkers = []; // {marker, number, lat, lng}
     let segmentGifs = {}; // { segmentIndex: gifDataUrl }
     let savedGifs = []; // array of up to 10 data URLs
     let pathSegments = []; // {startDist, length, from, to}
@@ -288,6 +291,8 @@
           destPos,
           routePoints,
         segmentGifs,
+        routeNumbers: routeNumberMarkers.map(m => ({number: m.number, lat: m.lat, lng: m.lng})),
+        nextNumber,
         savedGifs,
           pinColor: currentPinColor,
           speedValue: document.getElementById('speedInput').value,
@@ -326,6 +331,11 @@
           routePoints = state.routePoints;
           if (state.segmentGifs) segmentGifs = state.segmentGifs;
           if (Array.isArray(state.savedGifs)) savedGifs = state.savedGifs;
+          if (Array.isArray(state.routeNumbers)) {
+            routeNumberMarkers = [];
+            state.routeNumbers.forEach(n => placeNumberFromState(n.lat, n.lng, n.number));
+          }
+          if (state.nextNumber) nextNumber = state.nextNumber;
           drawRouteLine();
         }
         if (state.speedValue) {
@@ -515,13 +525,13 @@
       const sel = document.getElementById('segmentSelect');
       if (!sel) return;
       const current = sel.value;
-      sel.innerHTML = '<option value="">区間を選択</option>';
-      for (let i = 0; i < Math.max(0, routePoints.length - 1); i++) {
+      sel.innerHTML = '<option value="">番号を選択</option>';
+      routeNumberMarkers.forEach(item => {
         const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = `区間 ${i + 1}`;
+        opt.value = item.number;
+        opt.textContent = `番号 ${item.number}`;
         sel.appendChild(opt);
-      }
+      });
       if (current) sel.value = current;
     }
 
@@ -582,10 +592,37 @@
       const src = savedGifs[parseInt(gifIdx)];
       if (src) {
         segmentGifs[segIdx] = src;
-        document.getElementById('status').textContent = `区間 ${parseInt(segIdx)+1} に GIF ${parseInt(gifIdx)+1} を割り当てました`;
+        document.getElementById('status').textContent = `番号 ${segIdx} に GIF ${parseInt(gifIdx)+1} を割り当てました`;
         saveState();
       }
     };
+
+
+    function placeNumberFromState(lat, lng, num) {
+      const icon = L.divIcon({
+        className: 'route-number',
+        html: `<div style="background:#7c3aed;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4);">${num}</div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+      const marker = L.marker([lat, lng], { icon }).addTo(map);
+      routeNumberMarkers.push({ marker, number: num, lat, lng });
+    }
+
+    function placeNumber(lat, lng) {
+      const num = nextNumber++;
+      const icon = L.divIcon({
+        className: 'route-number',
+        html: `<div style="background:#7c3aed;color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4);">${num}</div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+      const marker = L.marker([lat, lng], { icon }).addTo(map);
+      routeNumberMarkers.push({ marker, number: num, lat, lng });
+      updateSegmentSelect();
+      document.getElementById('status').textContent = `番号 ${num} を置きました`;
+      saveState();
+    }
 
     function drawRouteLine() {
       if (routePolyline) map.removeLayer(routePolyline);
@@ -601,22 +638,7 @@
           lineJoin: 'round'
         }).addTo(map);
 
-        // 各直線区間に番号を表示
-        for (let i = 0; i < routePoints.length - 1; i++) {
-          const from = routePoints[i];
-          const to = routePoints[i + 1];
-          const midLat = (from.lat + to.lat) / 2;
-          const midLng = (from.lng + to.lng) / 2;
-          const num = i + 1;
-          const icon = L.divIcon({
-            className: 'route-number',
-            html: `<div style="background:#7c3aed;color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.3);">${num}</div>`,
-            iconSize: [22, 22],
-            iconAnchor: [11, 11]
-          });
-          const marker = L.marker([midLat, midLng], { icon, interactive: false }).addTo(map);
-          routeNumberMarkers.push(marker);
-        }
+
       }
     }
 
@@ -776,6 +798,21 @@
       if (setDestMode) document.getElementById('status').textContent = '地図をタップして目的地を設定';
     };
 
+
+    document.getElementById('placeNumberBtn').onclick = () => {
+      placeNumberMode = !placeNumberMode;
+      if (placeNumberMode) {
+        setDestMode = false;
+        drawRouteMode = false;
+        document.getElementById('setDestModeBtn').classList.remove('active');
+        document.getElementById('drawRouteBtn').classList.remove('active');
+        document.getElementById('status').textContent = '地図をタップして番号を置いてください';
+      } else {
+        document.getElementById('status').textContent = '番号配置を終了しました';
+      }
+      document.getElementById('placeNumberBtn').classList.toggle('active', placeNumberMode);
+    };
+
     document.getElementById('drawRouteBtn').onclick = () => {
       drawRouteMode = !drawRouteMode;
       if (drawRouteMode) {
@@ -850,18 +887,21 @@
       if (!container) return;
       gifVisible = !gifVisible;
       if (gifVisible) {
-        // 現在の区間のGIFを表示
-        let segIdx = 0;
-        for (let i = 0; i < pathSegments.length; i++) {
-          const seg = pathSegments[i];
-          if (currentPathDist >= seg.startDist && currentPathDist <= seg.startDist + seg.length) {
-            segIdx = i;
-            break;
-          }
+        // 最も近い番号のGIFを表示
+        let closestNum = null;
+        let minDist = Infinity;
+        if (targetPos) {
+          routeNumberMarkers.forEach(item => {
+            const d = calcDistance(targetPos.lat, targetPos.lng, item.lat, item.lng);
+            if (d < minDist) {
+              minDist = d;
+              closestNum = item.number;
+            }
+          });
         }
         const gifEl = document.getElementById('walkingGif');
-        if (segmentGifs[segIdx]) {
-          gifEl.src = segmentGifs[segIdx];
+        if (closestNum != null && segmentGifs[closestNum]) {
+          gifEl.src = segmentGifs[closestNum];
         }
         container.classList.add('show');
       } else {
