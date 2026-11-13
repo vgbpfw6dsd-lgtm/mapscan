@@ -144,6 +144,8 @@
       <button id="undoRouteBtn" class="secondary">1点戻す</button>
       <button id="clearRouteBtn" class="secondary">ルート全消去</button>
     </div>
+    
+
     <div class="row">
       <button id="startMoveBtn">移動開始</button>
       <button id="settingsBtn" class="secondary">速度設定</button>
@@ -167,6 +169,26 @@
         <div id="colorPicker" style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center;"></div>
       </div>
 
+
+      <div style="margin-top:10px; border-top:1px solid #e2e8f0; padding-top:8px;">
+        <div style="font-size:13px; font-weight:bold; margin-bottom:6px;">区間GIF割り当て</div>
+        <div class="row">
+          <select id="savedGifSelect" style="flex:1;">
+            <option value="">保存GIFを選択</option>
+          </select>
+          <button id="saveCurrentGifBtn" class="green" style="padding:9px 8px; font-size:12px;">現在を保存</button>
+        </div>
+        <div class="row" style="margin-top:4px;">
+          <select id="segmentSelect" style="flex:1;">
+            <option value="">区間を選択</option>
+          </select>
+          <button id="assignGifBtn" class="secondary" style="padding:9px 8px; font-size:12px;">割り当て</button>
+        </div>
+        <div style="font-size:11px; color:#666; text-align:center; margin-top:4px;">
+          「現在を保存」でGIFを最大10個まで番号付き保存<br>
+          移動中に相手ピンをタップ → その区間のGIF表示
+        </div>
+      </div>
       <div style="margin-top:10px; border-top:1px solid #e2e8f0; padding-top:8px;">
         <div style="font-size:13px; font-weight:bold; margin-bottom:6px;">プリセット</div>
         <div class="row">
@@ -249,6 +271,9 @@
     // ルート関連
     let routePoints = []; // [{lat, lng}, ...]
     let routePolyline = null;
+    let routeNumberMarkers = [];
+    let segmentGifs = {}; // { segmentIndex: gifDataUrl }
+    let savedGifs = []; // array of up to 10 data URLs
     let pathSegments = []; // {startDist, length, from, to}
     let totalPathLength = 0;
     let currentPathDist = 0;
@@ -262,6 +287,8 @@
           targetPos,
           destPos,
           routePoints,
+        segmentGifs,
+        savedGifs,
           pinColor: currentPinColor,
           speedValue: document.getElementById('speedInput').value,
           speedUnit: document.getElementById('speedUnit').value
@@ -297,6 +324,8 @@
         }
         if (Array.isArray(state.routePoints) && state.routePoints.length > 0) {
           routePoints = state.routePoints;
+          if (state.segmentGifs) segmentGifs = state.segmentGifs;
+          if (Array.isArray(state.savedGifs)) savedGifs = state.savedGifs;
           drawRouteLine();
         }
         if (state.speedValue) {
@@ -481,8 +510,88 @@
       }
     }
 
+
+    function updateSegmentSelect() {
+      const sel = document.getElementById('segmentSelect');
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = '<option value="">区間を選択</option>';
+      for (let i = 0; i < Math.max(0, routePoints.length - 1); i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `区間 ${i + 1}`;
+        sel.appendChild(opt);
+      }
+      if (current) sel.value = current;
+    }
+
+    function updateSavedGifSelect() {
+      const sel = document.getElementById('savedGifSelect');
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = '<option value="">保存GIFを選択</option>';
+      savedGifs.forEach((src, i) => {
+        if (src) {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.textContent = `GIF ${i + 1}`;
+          sel.appendChild(opt);
+        }
+      });
+      if (current !== '') sel.value = current;
+    }
+
+    document.getElementById('saveCurrentGifBtn').onclick = function() {
+      const gif = document.getElementById('walkingGif');
+      if (!gif || !gif.src) return;
+      if (savedGifs.length >= 10 && !savedGifs.includes(null)) {
+        // replace the first empty or overwrite last if full
+        const emptyIdx = savedGifs.findIndex(s => !s);
+        if (emptyIdx === -1) {
+          if (!confirm('保存枠が10個埋まっています。最後の枠を上書きしますか？')) return;
+          savedGifs[9] = gif.src;
+        } else {
+          savedGifs[emptyIdx] = gif.src;
+        }
+      } else {
+        const emptyIdx = savedGifs.findIndex(s => !s);
+        if (emptyIdx === -1) {
+          savedGifs.push(gif.src);
+        } else {
+          savedGifs[emptyIdx] = gif.src;
+        }
+      }
+      updateSavedGifSelect();
+      document.getElementById('status').textContent = '現在のGIFを保存しました';
+      saveState();
+    };
+
+    document.getElementById('assignGifBtn').onclick = function() {
+      const segSel = document.getElementById('segmentSelect');
+      const gifSel = document.getElementById('savedGifSelect');
+      const segIdx = segSel.value;
+      const gifIdx = gifSel.value;
+      if (segIdx === '') {
+        alert('区間を選択してください');
+        return;
+      }
+      if (gifIdx === '') {
+        alert('保存GIFを選択してください');
+        return;
+      }
+      const src = savedGifs[parseInt(gifIdx)];
+      if (src) {
+        segmentGifs[segIdx] = src;
+        document.getElementById('status').textContent = `区間 ${parseInt(segIdx)+1} に GIF ${parseInt(gifIdx)+1} を割り当てました`;
+        saveState();
+      }
+    };
+
     function drawRouteLine() {
       if (routePolyline) map.removeLayer(routePolyline);
+      routeNumberMarkers.forEach(m => map.removeLayer(m));
+      routeNumberMarkers = [];
+
       if (routePoints.length >= 2) {
         const latlngs = routePoints.map(p => [p.lat, p.lng]);
         routePolyline = L.polyline(latlngs, {
@@ -491,6 +600,23 @@
           opacity: 0.85,
           lineJoin: 'round'
         }).addTo(map);
+
+        // 各直線区間に番号を表示
+        for (let i = 0; i < routePoints.length - 1; i++) {
+          const from = routePoints[i];
+          const to = routePoints[i + 1];
+          const midLat = (from.lat + to.lat) / 2;
+          const midLng = (from.lng + to.lng) / 2;
+          const num = i + 1;
+          const icon = L.divIcon({
+            className: 'route-number',
+            html: `<div style="background:#7c3aed;color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.3);">${num}</div>`,
+            iconSize: [22, 22],
+            iconAnchor: [11, 11]
+          });
+          const marker = L.marker([midLat, midLng], { icon, interactive: false }).addTo(map);
+          routeNumberMarkers.push(marker);
+        }
       }
     }
 
@@ -560,6 +686,7 @@
       }
       routePoints.push({ lat, lng });
       drawRouteLine();
+      updateSegmentSelect();
       document.getElementById('status').textContent = `ルート点を追加（${routePoints.length}点）`;
       saveState();
     }
@@ -723,6 +850,19 @@
       if (!container) return;
       gifVisible = !gifVisible;
       if (gifVisible) {
+        // 現在の区間のGIFを表示
+        let segIdx = 0;
+        for (let i = 0; i < pathSegments.length; i++) {
+          const seg = pathSegments[i];
+          if (currentPathDist >= seg.startDist && currentPathDist <= seg.startDist + seg.length) {
+            segIdx = i;
+            break;
+          }
+        }
+        const gifEl = document.getElementById('walkingGif');
+        if (segmentGifs[segIdx]) {
+          gifEl.src = segmentGifs[segIdx];
+        }
         container.classList.add('show');
       } else {
         container.classList.remove('show');
@@ -845,7 +985,9 @@
     const restored = loadState();
     if (restored) {
       document.getElementById('status').textContent = '前回の設定を復元しました';
-      updatePinColor(currentPinColor); // 色ハイライトを更新
+      updatePinColor(currentPinColor);
+      updateSavedGifSelect();
+      updateSegmentSelect();
     }
 
     setTimeout(getLocation, 500);
